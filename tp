@@ -1,0 +1,133 @@
+const materials = [
+  { product: 'Dulux Wash & Wear', category: 'Interior walls', coverage: 16, p4: 78, p10: 175, p15: 245 },
+  { product: 'Dulux Wash & Wear Plus', category: 'Interior walls', coverage: 16, p4: 92, p10: 215, p15: 298 },
+  { product: 'Dulux Enviro2', category: 'Interior', coverage: 16, p4: 72, p10: 168, p15: 235 },
+  { product: 'Dulux Weathershield', category: 'Exterior', coverage: 16, p4: 96, p10: 235, p15: 335 },
+  { product: 'Dulux Aquanamel', category: 'Trim/doors', coverage: 16, p4: 108, p10: 260, p15: 385 },
+  { product: 'Dulux 1 Step Prep', category: 'Prepcoat', coverage: 12, p4: 74, p10: 166, p15: 238 },
+  { product: 'Dulux Precision Stain & Mould Blocker', category: 'Prepcoat', coverage: 10, p4: 98, p10: 245, p15: 348 }
+];
+
+const rates = [
+  { task: 'Floor protection', unit: 'm²', hours: 0.08 },
+  { task: 'Seal & peel / window masking', unit: 'window', hours: 0.35 },
+  { task: 'Sanding', unit: 'm²', hours: 0.10 },
+  { task: 'Plaster repairs', unit: 'm²', hours: 0.08 },
+  { task: 'Ceilings', unit: 'm²', hours: 0.16 },
+  { task: 'Walls', unit: 'm²', hours: 0.18 },
+  { task: 'Trims', unit: 'linear m', hours: 0.12 },
+  { task: 'Doors', unit: 'door', hours: 1.10 },
+  { task: 'Site clean', unit: 'job', hours: 2.00 },
+  { task: 'Furniture removal / white glove', unit: 'room', hours: 0.75 }
+];
+
+const $ = id => document.getElementById(id);
+const money = n => new Intl.NumberFormat('en-AU', {style:'currency', currency:'AUD'}).format(n || 0);
+const num = id => Number($(id).value || 0);
+
+function fillProducts(){
+  ['ceilingProduct','wallProduct','trimProduct','prepProduct'].forEach(id=>{
+    $(id).innerHTML = materials.map(m=>`<option>${m.product}</option>`).join('');
+  });
+  $('wallProduct').value = 'Dulux Wash & Wear';
+  $('ceilingProduct').value = 'Dulux Enviro2';
+  $('trimProduct').value = 'Dulux Aquanamel';
+  $('prepProduct').value = 'Dulux 1 Step Prep';
+}
+
+function tinOptimise(litres, m, factor){
+  let best = null;
+  const prices = {4:m.p4*factor,10:m.p10*factor,15:m.p15*factor};
+  const max = Math.ceil(litres/4)+8;
+  for(let q15=0;q15<=max;q15++) for(let q10=0;q10<=max;q10++) for(let q4=0;q4<=max;q4++){
+    const bought = q15*15 + q10*10 + q4*4;
+    if(bought >= litres && bought > 0){
+      const cost = q15*prices[15] + q10*prices[10] + q4*prices[4];
+      const waste = bought - litres;
+      const cand = {q15,q10,q4,bought,cost,waste};
+      if(!best || cost < best.cost || (cost === best.cost && waste < best.waste)) best = cand;
+    }
+  }
+  return best || {q15:0,q10:0,q4:0,bought:0,cost:0,waste:0};
+}
+
+function calcMaterial(product, area, coats, factor){
+  const m = materials.find(x=>x.product===product);
+  const litres = area * coats / m.coverage;
+  return {product, area, coats, coverage:m.coverage, litres, ...tinOptimise(litres,m,factor)};
+}
+
+function currentEstimate(){
+  const ceiling = num('ceilingArea'), walls = num('wallArea'), trim = num('trimLength');
+  const doors = num('doors'), windows = num('windows'), furniture = num('furnitureRooms'), coats = num('coats');
+  const prepMap = {Light:.2, Standard:.5, Heavy:1};
+  const prepArea = (ceiling + walls) * prepMap[$('prepLevel').value];
+  const factor = Math.pow(1 + num('annualIncrease')/100, num('yearsForward'));
+  const mat = [
+    calcMaterial($('ceilingProduct').value, ceiling, coats, factor),
+    calcMaterial($('wallProduct').value, walls, coats, factor),
+    calcMaterial($('trimProduct').value, trim*.25 + doors*4, coats, factor),
+    calcMaterial($('prepProduct').value, prepArea, 1, factor)
+  ];
+  const qty = {
+    'Floor protection': ceiling + walls,
+    'Seal & peel / window masking': windows,
+    'Sanding': ceiling + walls,
+    'Plaster repairs': (ceiling + walls) * ({Light:.02, Standard:.05, Heavy:.12}[$('prepLevel').value]),
+    'Ceilings': ceiling,
+    'Walls': walls,
+    'Trims': trim,
+    'Doors': doors,
+    'Site clean': 1,
+    'Furniture removal / white glove': furniture
+  };
+  const labour = rates.map(r=>({task:r.task, quantity:qty[r.task], unit:r.unit, hpu:r.hours, hours:qty[r.task]*r.hours}));
+  const labourHours = labour.reduce((s,x)=>s+x.hours,0);
+  const labourCost = labourHours * num('hourlyRate');
+  const materialCost = mat.reduce((s,x)=>s+x.cost,0);
+  const subtotal = labourCost + materialCost;
+  const markupValue = subtotal * (num('markup')/100);
+  const total = subtotal + markupValue;
+  return {mat, labour, labourHours, labourCost, materialCost, markupValue, total};
+}
+
+function render(){
+  const e = currentEstimate();
+  $('labourHours').textContent = e.labourHours.toFixed(1);
+  $('labourCost').textContent = money(e.labourCost);
+  $('materialCost').textContent = money(e.materialCost);
+  $('finalTotal').textContent = money(e.total);
+  $('materialsTable').innerHTML = `<tr><th>Product</th><th>Litres needed</th><th>15L</th><th>10L</th><th>4L</th><th>Litres bought</th><th>Waste</th><th>Cost</th></tr>` +
+    e.mat.map(x=>`<tr><td>${x.product}</td><td>${x.litres.toFixed(2)}</td><td>${x.q15}</td><td>${x.q10}</td><td>${x.q4}</td><td>${x.bought.toFixed(1)}</td><td>${x.waste.toFixed(2)}</td><td>${money(x.cost)}</td></tr>`).join('');
+  $('labourTable').innerHTML = `<tr><th>Task</th><th>Quantity</th><th>Unit</th><th>Hours/unit</th><th>Total hours</th></tr>` +
+    e.labour.map(x=>`<tr><td>${x.task}</td><td>${x.quantity.toFixed(2)}</td><td>${x.unit}</td><td>${x.hpu.toFixed(2)}</td><td>${x.hours.toFixed(2)}</td></tr>`).join('');
+  renderSaved();
+}
+
+function saveEstimate(){
+  const e = currentEstimate();
+  const saved = JSON.parse(localStorage.getItem('bbx-estimates') || '[]');
+  saved.unshift({
+    id: Date.now(), date: new Date().toLocaleDateString('en-AU'), client: $('clientName').value || 'Client',
+    address: $('jobAddress').value || '', estimateNumber: $('estimateNumber').value || '', total: e.total,
+    labourHours: e.labourHours, materials: e.materialCost
+  });
+  localStorage.setItem('bbx-estimates', JSON.stringify(saved.slice(0,30)));
+  renderSaved();
+}
+
+function renderSaved(){
+  const saved = JSON.parse(localStorage.getItem('bbx-estimates') || '[]');
+  $('savedEstimates').innerHTML = saved.length ? saved.map(x=>`<div class="saved-item"><div><strong>${x.client}</strong><br>${x.date} · ${x.estimateNumber || 'No estimate #'} · ${money(x.total)} · ${x.labourHours.toFixed(1)} hrs</div><button onclick="deleteSaved(${x.id})">Delete</button></div>`).join('') : '<p>No saved estimates yet.</p>';
+}
+function deleteSaved(id){
+  const saved = JSON.parse(localStorage.getItem('bbx-estimates') || '[]').filter(x=>x.id!==id);
+  localStorage.setItem('bbx-estimates', JSON.stringify(saved));
+  renderSaved();
+}
+
+fillProducts();
+document.querySelectorAll('input,select').forEach(el=>el.addEventListener('input', render));
+$('saveBtn').addEventListener('click', saveEstimate);
+$('printBtn').addEventListener('click', () => window.print());
+render();
